@@ -1,0 +1,69 @@
+name: Build VyOS qcow2 image
+
+on:
+  workflow_dispatch:
+    inputs:
+      flavor:
+        description: Build flavor (data/build-flavors/<flavor>.toml)
+        type: string
+        default: generic
+      version:
+        description: Version string (empty = <UTC date>-rolling)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  BUILD_BY: adrian@lolo.co
+  CONTAINER_IMAGE: vyos/vyos-build:rolling
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Set version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: echo "version=${INPUT_VERSION:-$(date -u +%Y.%m.%d-%H%M)-rolling}" >> "$GITHUB_OUTPUT"
+
+      - name: Load loop and device-mapper modules
+        run: sudo modprobe -a loop dm_mod
+
+      # The raw disk is partitioned through loop devices and kpartx, so the
+      # container needs the host /dev, same as a local build.
+      - name: Build image
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          FLAVOR: ${{ inputs.flavor }}
+        run: |
+          docker pull "$CONTAINER_IMAGE"
+          docker run --rm --privileged \
+            --sysctl net.ipv6.conf.lo.disable_ipv6=0 \
+            -v /dev:/dev \
+            -v "$GITHUB_WORKSPACE":/vyos -w /vyos \
+            -e GOSU_UID="$(id -u)" -e GOSU_GID="$(id -g)" \
+            -e VERSION -e FLAVOR -e BUILD_BY \
+            "$CONTAINER_IMAGE" \
+            bash -c 'sudo git config --system --add safe.directory /vyos && \
+              sudo ./build-vyos-image --architecture amd64 --build-by "$BUILD_BY" --version "$VERSION" "$FLAVOR"'
+          ls -lh build/*.qcow2
+
+      - name: Upload qcow2
+        uses: actions/upload-artifact@v7
+        with:
+          name: vyos-${{ steps.version.outputs.version }}-${{ inputs.flavor }}-amd64
+          path: build/*.qcow2
+          if-no-files-found: error
+          retention-days: 7

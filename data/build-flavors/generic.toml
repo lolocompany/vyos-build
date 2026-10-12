@@ -1,3 +1,13 @@
 # Generic (aka "universal") ISO image
 
-image_format = "iso"
+image_format = ["qcow2"]
+
+packages = [
+  "cloud-init",
+  "qemu-guest-agent",
+  "gdb",
+  "strace",
+  "apt-rdepends",
+  "vim",
+  "vyos-1x-smoketest"
+]
